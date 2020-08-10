@@ -45,6 +45,8 @@ class SessionStore(DjangoDBSessionStore):
     def _decode_with_single_key(self, hash_val, serialized):
         expected_hash = self._hash(serialized)
         if not constant_time_compare(hash_val.decode(), expected_hash):
+            # logging using print because there is no logger here
+            print("Session data is corrupted!")
             raise SuspiciousOperation("Session data corrupted")
 
         return self.serializer().loads(serialized)
@@ -57,4 +59,6 @@ class SessionStore(DjangoDBSessionStore):
             # If here, that means session got decoded
             return self.serializer().loads(serialized)
         # If here, then we've exhausted all the keys, raise Exception
+        # logging using print because there is no logger here
+        print("Session data is corrupted!")
         raise SuspiciousOperation("Session data corrupted")
