@@ -14,6 +14,7 @@ from django.core.urlresolvers import get_script_prefix, reverse, set_script_pref
 from django.contrib import admin
 from django.contrib.auth import get_permission_codename
 from django.contrib.admin.helpers import ACTION_CHECKBOX_NAME
+from django.contrib.admin.views.main import TO_FIELD_VAR
 from django.contrib.admin.models import LogEntry, DELETION
 from django.contrib.admin.sites import LOGIN_FORM_KEY
 from django.contrib.admin.templatetags.admin_urls import add_preserved_filters
@@ -575,6 +576,45 @@ class AdminViewBasicTest(AdminViewBasicTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'employee__person_ptr__exact')
         response = self.client.get("/test_admin/admin/admin_views/workhour/?employee__person_ptr__exact=%d" % e1.pk)
+        self.assertEqual(response.status_code, 200)
+
+    def test_disallowed_to_field(self):
+        with patch_logger('django.security.DisallowedModelAdminToField', 'error') as calls:
+            response = self.client.get("/test_admin/admin/admin_views/section/", {TO_FIELD_VAR: 'missing_field'})
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(len(calls), 1)
+
+        # Specifying a field that is not refered by any other model registered
+        # to this admin site should raise an exception.
+        with patch_logger('django.security.DisallowedModelAdminToField', 'error') as calls:
+            response = self.client.get("/test_admin/admin/admin_views/section/", {TO_FIELD_VAR: 'name'})
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(len(calls), 1)
+
+        # #23839 - Primary key should always be allowed, even if the referenced model isn't registered.
+        response = self.client.get("/test_admin/admin/admin_views/notreferenced/", {TO_FIELD_VAR: 'id'})
+        self.assertEqual(response.status_code, 200)
+
+        # Specifying a field referenced by another model though a m2m should be allowed.
+        # XXX: We're not testing against a non-primary key field since the admin doesn't
+        # support it yet, ref #23862
+        response = self.client.get("/test_admin/admin/admin_views/recipe/", {TO_FIELD_VAR: 'id'})
+        self.assertEqual(response.status_code, 200)
+
+        # #23604 - Specifying a field referenced through a reverse m2m relationship should be allowed.
+        # XXX: We're not testing against a non-primary key field since the admin doesn't
+        # support it yet, ref #23862
+        response = self.client.get("/test_admin/admin/admin_views/ingredient/", {TO_FIELD_VAR: 'id'})
+        self.assertEqual(response.status_code, 200)
+
+        # #23329 - Specifying a field that is not refered by any other model directly registered
+        # to this admin site but registered through inheritance should be allowed.
+        response = self.client.get("/test_admin/admin/admin_views/referencedbyparent/", {TO_FIELD_VAR: 'name'})
+        self.assertEqual(response.status_code, 200)
+
+        # #23431 - Specifying a field that is only refered to by a inline of a registered
+        # model should be allowed.
+        response = self.client.get("/test_admin/admin/admin_views/referencedbyinline/", {TO_FIELD_VAR: 'name'})
         self.assertEqual(response.status_code, 200)
 
     def test_allowed_filtering_15103(self):
@@ -2204,10 +2244,9 @@ class AdminSearchTest(TestCase):
         """Ensure that the to_field GET parameter is preserved when a search
         is performed. Refs #10918.
         """
-        from django.contrib.admin.views.main import TO_FIELD_VAR
-        response = self.client.get('/test_admin/admin/auth/user/?q=joe&%s=username' % TO_FIELD_VAR)
+        response = self.client.get('/test_admin/admin/auth/user/?q=joe&%s=id' % TO_FIELD_VAR)
         self.assertContains(response, "\n1 user\n")
-        self.assertContains(response, '<input type="hidden" name="t" value="username"/>', html=True)
+        self.assertContains(response, '<input type="hidden" name="%s" value="id"/>' % TO_FIELD_VAR, html=True)
 
     def test_exact_matches(self):
         response = self.client.get('/test_admin/admin/admin_views/recommendation/?q=bar')
